@@ -6,7 +6,7 @@ from sqlalchemy import text
 from app.config import settings
 from app.database import async_session
 from app.redis_client import redis_client
-from app.schemas.health import HealthResponse, DetailedHealthResponse
+from app.schemas.health import DetailedHealthResponse, HealthResponse
 
 logger = logging.getLogger(__name__)
 
