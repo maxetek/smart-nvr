@@ -66,9 +66,13 @@ class EventConsumer:
             try:
                 event_type = data.get("event_type", "")
 
-                # Only persist confirmed tracks and significant events
+                # Persist confirmed tracks, significant events, and pattern events
                 if event_type in ("track_confirmed", "track_lost"):
                     event = self._build_event(data)
+                    if event:
+                        events_to_insert.append(event)
+                elif event_type.startswith("pattern_"):
+                    event = self._build_pattern_event(data)
                     if event:
                         events_to_insert.append(event)
 
@@ -127,6 +131,41 @@ class EventConsumer:
             )
         except Exception as e:
             logger.error("Failed to build event: %s", e)
+            return None
+
+    def _build_pattern_event(self, data: dict[str, str]) -> Event | None:
+        """Build an Event model from a pattern event message."""
+        try:
+            camera_id = data.get("camera_id")
+            if not camera_id:
+                return None
+
+            event_type = data.get("event_type", "pattern")
+            severity = data.get("severity", "warning")
+
+            # Collect metadata from all fields except the core ones
+            core_keys = {
+                "event_type", "camera_id", "track_id", "track_internal_id",
+                "confidence", "severity", "timestamp", "pattern_name",
+            }
+            metadata = {
+                "pattern_name": data.get("pattern_name", ""),
+                "track_id": data.get("track_id"),
+                "track_internal_id": data.get("track_internal_id"),
+            }
+            for k, v in data.items():
+                if k not in core_keys:
+                    metadata[k] = v
+
+            return Event(
+                camera_id=uuid.UUID(camera_id),
+                event_type=event_type,
+                severity=severity,
+                confidence=float(data.get("confidence", 0)),
+                metadata_json=metadata,
+            )
+        except Exception as e:
+            logger.error("Failed to build pattern event: %s", e)
             return None
 
     async def stop(self) -> None:
