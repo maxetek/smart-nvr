@@ -6,7 +6,7 @@ from pydantic import BaseModel, EmailStr
 
 class UserBase(BaseModel):
     username: str
-    email: str
+    email: EmailStr
 
 
 class UserCreate(UserBase):
@@ -21,3 +21,7 @@ class UserResponse(UserBase):
     updated_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class UserRoleUpdate(BaseModel):
+    role: str

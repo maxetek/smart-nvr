@@ -14,8 +14,19 @@ class Settings(BaseSettings):
     jwt_access_token_expire_minutes: int = 30
     jwt_refresh_token_expire_days: int = 7
 
+    # Encryption
+    encryption_key: str = "changeme_generate_fernet_key"
+
     # go2rtc
     go2rtc_api_url: str = "http://go2rtc:1984"
+
+    # Initial admin
+    initial_admin_username: str = "admin"
+    initial_admin_password: str = "changeme"
+    initial_admin_email: str = "admin@smartnvr.local"
+
+    # CORS
+    cors_origins: list[str] = ["http://localhost:5173"]
 
     # App
     app_name: str = "Smart NVR"
