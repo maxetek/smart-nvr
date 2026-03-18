@@ -17,6 +17,15 @@ export default defineConfig({
         target: "http://backend:8000",
         changeOrigin: true,
       },
+      "/ws": {
+        target: "http://backend:8000",
+        ws: true,
+      },
+      "/go2rtc": {
+        target: "http://go2rtc:1984",
+        rewrite: (path) => path.replace(/^\/go2rtc/, ""),
+        ws: true,
+      },
     },
   },
 });
