@@ -1,10 +1,15 @@
 import asyncio
 import logging
+import uuid
 from typing import Any
 
+from app.pipeline.attributes.registry import AttributeModelRegistry
+from app.pipeline.attributes.smoking_classifier import SmokingClassifier
+from app.pipeline.attributes.weapon_classifier import WeaponClassifier
 from app.pipeline.camera_pipeline import CameraPipeline, CameraPipelineConfig
 from app.pipeline.detector.yolo_detector import DetectorConfig, YOLODetector
 from app.pipeline.event_consumer import EventConsumer
+from app.pipeline.patterns.pattern_registry import create_pattern
 
 logger = logging.getLogger(__name__)
 
@@ -19,6 +24,11 @@ class PipelineManager:
         self._consumer = EventConsumer()
         self._consumer_task: asyncio.Task | None = None
         self._initialized = False
+
+        # Shared attribute model registry
+        self._attribute_registry = AttributeModelRegistry()
+        self._attribute_registry.register(SmokingClassifier())
+        self._attribute_registry.register(WeaponClassifier())
 
     async def initialize(self) -> None:
         """Initialize the shared detector model."""
@@ -42,7 +52,11 @@ class PipelineManager:
             logger.warning("Camera %s already has an active pipeline", config.camera_id)
             return
 
-        pipeline = CameraPipeline(config=config, detector=self._detector)
+        pipeline = CameraPipeline(
+            config=config,
+            detector=self._detector,
+            attribute_registry=self._attribute_registry,
+        )
         self._pipelines[config.camera_id] = pipeline
         self._tasks[config.camera_id] = asyncio.create_task(
             self._run_pipeline(config.camera_id, pipeline)
@@ -97,6 +111,38 @@ class PipelineManager:
                 pass
 
         logger.info("Pipeline manager shut down")
+
+    async def load_patterns_for_camera(self, camera_id: str, db_session) -> None:
+        """Load patterns from database for a camera and add to its pipeline."""
+        from sqlalchemy import select
+
+        from app.models.pattern import Pattern as PatternModel
+
+        result = await db_session.execute(
+            select(PatternModel).where(
+                PatternModel.camera_id == uuid.UUID(camera_id),
+                PatternModel.is_enabled == True,  # noqa: E712
+            )
+        )
+        db_patterns = result.scalars().all()
+
+        pipeline = self._pipelines.get(camera_id)
+        if not pipeline:
+            return
+
+        for p in db_patterns:
+            try:
+                pattern = create_pattern(
+                    pattern_id=str(p.id),
+                    camera_id=camera_id,
+                    name=p.name,
+                    pattern_type=p.pattern_type,
+                    config=p.config_json,
+                    cooldown_seconds=p.cooldown_seconds,
+                )
+                pipeline.pattern_engine.add_pattern(pattern)
+            except Exception as e:
+                logger.error("Failed to load pattern %s: %s", p.name, e)
 
     def get_status(self) -> dict[str, Any]:
         """Get status of all pipelines."""

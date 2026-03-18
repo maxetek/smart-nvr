@@ -3,6 +3,7 @@ import time
 from typing import Any
 
 from app.pipeline.models.track import Track
+from app.pipeline.patterns.base import PatternEvent
 from app.redis_client import redis_client
 
 logger = logging.getLogger(__name__)
@@ -64,3 +65,24 @@ class EventPublisher:
     async def publish_track_lost(self, track: Track) -> str:
         """Publish a track_lost event."""
         return await self.publish_track_event(track, "track_lost")
+
+    async def publish_pattern_event(self, event: PatternEvent) -> str:
+        """Publish a pattern event to Redis Stream."""
+        data = {
+            "event_type": f"pattern_{event.pattern_type}",
+            "pattern_name": event.pattern_name,
+            "camera_id": event.camera_id,
+            "track_id": str(event.track_id),
+            "track_internal_id": event.track_internal_id,
+            "confidence": str(event.confidence),
+            "severity": event.severity,
+            "timestamp": str(event.timestamp),
+            **{k: str(v) for k, v in event.metadata.items()},
+        }
+        msg_id = await redis_client.publish_event(self.stream_name, data)
+        logger.debug(
+            "Published pattern event %s for camera %s",
+            event.pattern_type,
+            event.camera_id,
+        )
+        return msg_id

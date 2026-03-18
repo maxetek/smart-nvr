@@ -5,10 +5,13 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from app.pipeline.attributes.cascade_pipeline import CascadeAttributePipeline
+from app.pipeline.attributes.registry import AttributeModelRegistry
 from app.pipeline.detector.yolo_detector import DetectorConfig, YOLODetector
 from app.pipeline.event_publisher import EventPublisher
 from app.pipeline.frame_grabber import FrameGrabber, FrameGrabberConfig
 from app.pipeline.models.track import TrackState
+from app.pipeline.patterns.pattern_engine import PatternEngine
 from app.pipeline.recorder import SegmentRecorder, SegmentRecorderConfig
 from app.pipeline.state_machine import TrackStateMachine
 from app.pipeline.tracker.bytetrack_tracker import ByteTrackConfig, ByteTrackTracker
@@ -32,12 +35,13 @@ class CameraPipelineConfig:
 
 
 class CameraPipeline:
-    """Per-camera processing pipeline: grab -> detect -> track -> publish."""
+    """Per-camera processing pipeline: grab -> detect -> track -> attributes -> patterns -> publish."""
 
     def __init__(
         self,
         config: CameraPipelineConfig,
         detector: YOLODetector,  # Shared across cameras
+        attribute_registry: AttributeModelRegistry | None = None,
     ) -> None:
         self.config = config
         self._detector = detector
@@ -57,10 +61,20 @@ class CameraPipeline:
                 config=config.recorder_config,
             )
 
+        # Pattern engine and attribute cascade
+        self._pattern_engine = PatternEngine()
+        registry = attribute_registry or AttributeModelRegistry()
+        self._cascade = CascadeAttributePipeline(registry)
+
         self._running = False
         self._fps = 0.0
         self._frame_count = 0
         self._last_fps_time = time.time()
+
+    @property
+    def pattern_engine(self) -> PatternEngine:
+        """Access the pattern engine for adding/removing patterns."""
+        return self._pattern_engine
 
     async def start(self) -> None:
         """Start the pipeline."""
@@ -104,7 +118,7 @@ class CameraPipeline:
                 self._last_fps_time = now
 
     async def _process_frame(self, frame: np.ndarray, timestamp: float) -> None:
-        """Process a single frame: detect -> track -> state transitions -> publish events."""
+        """Process a single frame: detect -> track -> attributes -> patterns -> publish."""
         # 1. Detect
         detections = await asyncio.to_thread(self._detector.detect, frame)
 
@@ -112,7 +126,17 @@ class CameraPipeline:
         active_tracks = self._tracker.update(detections)
         active_track_ids = {t.track_id for t in active_tracks}
 
-        # 3. State transitions + event publishing
+        # 3. Run cascade attribute pipeline on active tracks
+        self._cascade.process(frame, active_tracks)
+
+        # 4. Run pattern engine
+        pattern_events = self._pattern_engine.evaluate(active_tracks, frame.shape[:2])
+
+        # 5. Publish pattern events
+        for pe in pattern_events:
+            await self._publisher.publish_pattern_event(pe)
+
+        # 6. State transitions + event publishing
         all_tracks = self._tracker.get_all_tracks()
         for tid, track in all_tracks.items():
             is_detected = tid in active_track_ids
